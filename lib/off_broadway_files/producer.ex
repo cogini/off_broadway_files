@@ -1,0 +1,412 @@
+defmodule OffBroadwayFiles.Producer do
+  @moduledoc """
+  A Broadway producer that reads files from a directory.
+  """
+  use GenStage
+
+  @behaviour Broadway.Producer
+  # @behaviour Broadway.Acknowledger
+
+  @max_binary_memory 50_000_000
+
+  use Private
+
+  require Logger
+
+  @doc false
+  def start_link(opts) do
+    GenStage.start_link(__MODULE__, opts, name: __MODULE__)
+  end
+
+  @impl true
+  def init(args) do
+    Logger.info("#{__MODULE__} init: #{inspect(args)}")
+
+    state_tab = args[:state_tab] || :"#{name(args)}_producer_state"
+
+    # TODO: handle case where table already exists
+    :ets.new(state_tab, [:named_table, :public, :set])
+
+    config = %{
+      # Source directory for files
+      in_dir: args[:in_dir],
+
+      # Directory to save files after they have been processed
+      archive_dir: args[:archive_dir],
+
+      # Directory to save failed files
+      failed_dir: args[:failed_dir],
+
+      # Ignore files newer than this number of seconds.
+      # Avoids processing files that are currently being written.
+      min_age: args[:min_age] || 0,
+
+      # Regex matching files to process
+      # Files that do not match this pattern will be ignored
+      # file_pattern: Regex.compile!(args[:file_pattern] || ".*\\.log$"),
+      file_pattern: Regex.compile!(args[:file_pattern] || ".*$"),
+
+      # Files to queue in advance of demand
+      prefetch_count: args[:prefetch_count] || 10,
+
+      # Number of times to try processing a file before moving it to the failed_dir
+      tries: args[:tries] || 3,
+
+      # Regex to extract datetime from filename
+      datetime_pattern:
+        Regex.compile!(
+          args[:datetime_pattern] || "\.*-(?<year>\\d{4})(?<month>\\d{2})(?<day>\\d{2}).*"
+        )
+    }
+
+    fetch_interval = args[:fetch_interval] || 10_000
+
+    state = %{
+      config: config,
+      state_tab: state_tab,
+
+      # Unfulfilled demand from consumers
+      demand: 0,
+
+      # Prefetch queue to avoid reading dir on every demand
+      queue: :queue.new(),
+
+      # Last file read from the input directory
+      last_file: nil,
+
+      # How often to check for new files in ms
+      fetch_interval: fetch_interval
+    }
+
+    Logger.debug("state: #{inspect(state)}")
+
+    Process.send(self(), :fetch, [])
+    {:producer, state}
+  end
+
+  @impl true
+  # Fulfill demand from queue
+  def handle_demand(incoming_demand, state) do
+    %{demand: demand, queue: queue} = state
+
+    queue_len = :queue.len(queue)
+    Logger.info("incoming_demand: #{incoming_demand}, demand: #{demand}, queue_len: #{queue_len}")
+
+    new_demand = incoming_demand + demand
+
+    {events, remaining_queue, remaining_demand} = dispatch_events(queue, queue_len, new_demand)
+
+    Logger.debug(
+      "events: #{inspect(events)}, remaining_queue: #{inspect(remaining_queue)}, remaining_demand: #{remaining_demand}"
+    )
+
+    {:noreply, events, %{state | queue: remaining_queue, demand: remaining_demand}}
+  end
+
+  @impl true
+  # Add new files from the input dir to the queue
+  def handle_info(:fetch, state) do
+    Logger.debug("handle_info(:fetch) state: #{inspect(state)}")
+
+    %{config: config, queue: queue, demand: demand} = state
+
+    maybe_garbage_collect()
+
+    queue_len = :queue.len(queue)
+    desired_count = config.prefetch_count - queue_len
+
+    new_queue = add_files_to_queue(queue, desired_count, state)
+
+    {events, remaining_queue, remaining_demand} =
+      dispatch_events(new_queue, :queue.len(new_queue), demand)
+
+    messages =
+      for event <- events do
+        %Broadway.Message{
+          data: event,
+          acknowledger: Broadway.CallerAcknowledger.init({self(), make_ref()}, :ignored),
+          metadata: Map.take(event, [:name, :path, :stat])
+        }
+      end
+
+    Process.send_after(self(), :fetch, state.fetch_interval)
+    {:noreply, messages, %{state | queue: remaining_queue, demand: remaining_demand}}
+  end
+
+  # :ets.tab2list(:zones)
+
+  # Handler for Broadway.CallerAcknowledger
+  def handle_info({:ack, _ref, successful_messages, failed_messages} = message, state) do
+    Logger.info(fn -> "ACK: #{inspect(message)}" end)
+    config = state.config
+    %{archive_dir: archive_dir, failed_dir: failed_dir, datetime_pattern: pattern, tries: tries} = config
+
+    # Move files to archive_dir after successful processing
+    for message <- successful_messages do
+      event = message.metadata
+      %{name: name, path: path} = event
+
+      {:ok, datetime} = filename_to_datetime(path, pattern)
+      datetime_path = datetime_to_path(datetime)
+      dest_path = Path.join([archive_dir, datetime_path, name])
+
+      Logger.debug("Moving file #{path} to archive #{dest_path}")
+      File.mkdir_p!(Path.join(archive_dir, datetime_path))
+      :ok = File.rename(path, dest_path)
+
+      :ets.delete(state.state_tab, path)
+    end
+
+    # Retry or move files to failed_dir
+    retry_messages =
+      for message <- failed_messages do
+        event = message.metadata
+        %{path: path} = event
+
+        case :ets.lookup(state.state_tab, path) do
+          [] ->
+            # This should not happen
+            Logger.warning("File not found in state table, retrying: #{path}")
+            :ets.insert(state.state_tab, {path, %{try: 1}})
+            message
+
+          [{_path, %{try: try}}] ->
+            if try <= tries do
+              Logger.info("Retrying file (try #{try + 1}): #{path}")
+              :ets.insert(state.state_tab, {path, %{try: try + 1}})
+              message
+            else
+              {:ok, datetime} = filename_to_datetime(path, pattern)
+              datetime_path = datetime_to_path(datetime)
+              dest_path = Path.join([failed_dir, datetime_path, Path.basename(path)])
+
+              Logger.info("File tries exceeded, moving #{path} to failed #{dest_path}")
+
+              File.mkdir_p!(Path.join(failed_dir, datetime_path))
+              :ok = File.rename(path, dest_path)
+              :ets.delete(state.state_tab, path)
+              []
+            end
+        end
+      end
+
+    {:noreply, List.flatten(retry_messages), state}
+  end
+
+  # Handler for Broadway.CallerAcknowledger
+  def handle_info({:configure, _ref, _options} = message, state) do
+    Logger.info(fn -> "ACK: #{inspect(message)}" end)
+    {:noreply, [], state}
+  end
+
+  def handle_info(message, state) do
+    Logger.info(fn -> "Unexpected message: #{inspect(message)}" end)
+    {:noreply, [], state}
+  end
+
+  # defp datetime_path(event, pattern) do
+  #   %{name: name, path: path} = event
+  #   {:ok, datetime} = filename_to_datetime(path, pattern)
+  #   datetime_path = datetime_to_path(datetime)
+  # end
+
+  private do
+    # Fulfil demand from queue
+    @spec dispatch_events(:queue.queue(), non_neg_integer(), non_neg_integer()) ::
+            {events :: list(), remaining_queue :: :queue.queue(),
+             remaining_demand :: non_neg_integer()}
+    defp dispatch_events(queue, queue_len, demand)
+
+    # queue is empty
+    defp dispatch_events(queue, 0, demand) do
+      {[], queue, demand}
+    end
+
+    # queue has enough to satisfy demand
+    defp dispatch_events(queue, queue_len, demand) when queue_len >= demand do
+      {events_queue, remaining_queue} = :queue.split(demand, queue)
+      {:queue.to_list(events_queue), remaining_queue, 0}
+    end
+
+    # queue does not have enough events to satisfy demand
+    defp dispatch_events(queue, queue_len, demand) when queue_len < demand do
+      {events_queue, remaining_queue} = :queue.split(demand, queue)
+      {:queue.to_list(events_queue), remaining_queue, demand - queue_len}
+    end
+
+    @spec add_files_to_queue(:queue.queue(), non_neg_integer(), map()) :: :queue.queue()
+    defp add_files_to_queue(queue, desired_count, state) do
+      %{config: config, state_tab: state_tab} = state
+
+      case read_files(config) do
+        {:ok, all_files} ->
+          now = :calendar.datetime_to_gregorian_seconds(:calendar.universal_time())
+
+          new_files =
+            all_files
+            # Get files that are newer than the last proccessed file, if any
+            |> new_files(state_tab)
+            # Restrict the number of files that we have to stat
+            |> Enum.take(desired_count)
+            # Stat file and filter out directories and other non-regular files
+            |> Enum.flat_map(&stat_file/1)
+            # Skip files that are newer than the minimum age
+            |> Enum.filter(&by_age(&1, now, config.min_age))
+
+          # |> Enum.map(&get_datetime_from_filename(&1, datetime_pattern))
+
+          Logger.debug("new_files: #{inspect(new_files)}")
+
+          if Enum.empty?(new_files) do
+            Logger.debug("No new files found in #{config.in_dir}")
+            queue
+          else
+            new_queue = Enum.reduce(new_files, queue, &:queue.in/2)
+            Enum.each(new_files, fn file -> :ets.insert(state_tab, {file.path, %{try: 1}}) end)
+            # Logger.debug("new queue len: #{:queue.len(new_queue)}")
+            Logger.debug("Added new files to queue: #{length(new_files)}")
+            new_queue
+          end
+
+        {:error, reason} ->
+          Logger.error("Error reading files from #{config.in_dir}: #{inspect(reason)}")
+          queue
+      end
+    end
+
+    # Read files from the input directory, filtering by name and age
+    @spec read_files(map()) ::
+            {:ok, list(map())} | {:error, File.posix() | :badarg | {:no_translation, binary()}}
+    defp read_files(config) do
+      %{file_pattern: file_pattern, in_dir: in_dir} = config
+
+      with {:ok, all_files} <- File.ls(in_dir) do
+        Logger.debug("all_files in #{in_dir}: #{inspect(all_files)}")
+
+        files =
+          all_files
+          |> match_names(file_pattern)
+          |> Enum.sort()
+          |> Enum.map(fn name -> %{name: name, path: Path.join(in_dir, name)} end)
+
+        {:ok, files}
+      end
+    end
+
+    # Select names that match Regex pattern, if any
+    defp match_names(names, nil), do: names
+
+    defp match_names(names, file_pattern) do
+      Enum.filter(names, fn name -> Regex.match?(file_pattern, name) end)
+    end
+
+    # Get files that are not already in the state table
+    @spec new_files(list(map()), atom()) :: list(map())
+    defp new_files(events, state_tab) do
+      file_state = :ets.tab2list(state_tab) |> Enum.into(%{})
+      Enum.filter(events, fn event -> not Map.has_key?(file_state, event.path) end)
+    end
+
+    # Stat file and and filter out directories and other non-regular files
+    @spec stat_file(map()) :: list(map())
+    defp stat_file(%{path: path} = rec) do
+      case File.stat!(path, time: :universal) do
+        %{type: :regular} = stat ->
+          [Map.put(rec, :stat, stat)]
+
+        %{type: :directory} ->
+          # Logger.debug("Skipping #{type} #{path}")
+          []
+
+        %{type: type} ->
+          Logger.debug("Skipping #{type} #{path}")
+          []
+      end
+    end
+
+    # Filter to skip new files
+    @spec by_age(map(), integer(), integer()) :: boolean()
+    defp by_age(%{path: path, stat: stat}, now, min_age) do
+      if age_in_seconds(stat.mtime, now) > min_age do
+        true
+      else
+        Logger.debug("Skipping new file #{path}")
+        false
+      end
+    end
+
+    # Get age in seconds
+    defp age_in_seconds(datetime, now) do
+      now - :calendar.datetime_to_gregorian_seconds(datetime)
+    end
+
+    # Extract datetime from filename using Regex pattern
+    @spec get_datetime_from_filename(map(), Regex.t()) :: map()
+    defp get_datetime_from_filename(rec, pattern) do
+      %{path: path} = rec
+
+      case filename_to_datetime(path, pattern) do
+        {:ok, datetime} ->
+          datetime_path = datetime_to_path(datetime)
+          Map.merge(rec, %{datetime: datetime, datetime_path: datetime_path})
+
+        {:error, :no_match} ->
+          Logger.warning("Filename #{path} does not match datetime pattern #{inspect(pattern)}")
+          rec
+      end
+    end
+
+    # Get datetime from filename using Regex pattern
+    @spec filename_to_datetime(binary(), Regex.t()) :: {:ok, DateTime.t()}
+    defp filename_to_datetime(filename, pattern) do
+      case Regex.named_captures(pattern, filename) do
+        nil ->
+          {:error, :no_match}
+
+        named_captures ->
+          {:ok, date} =
+            Date.new(
+              String.to_integer(named_captures["year"]),
+              String.to_integer(named_captures["month"]),
+              String.to_integer(named_captures["day"])
+            )
+
+          {:ok, time} = Time.new(0, 0, 0, 0)
+          DateTime.new(date, time, "Etc/UTC")
+      end
+    end
+
+    # Format datetime as path string "YYYY/MM/DD"
+    @spec datetime_to_path(DateTime.t()) :: binary()
+    defp datetime_to_path(datetime) do
+      year = datetime.year |> Integer.to_string() |> String.pad_leading(4, "0")
+      month = datetime.month |> Integer.to_string() |> String.pad_leading(2, "0")
+      day = datetime.day |> Integer.to_string() |> String.pad_leading(2, "0")
+
+      Path.join([year, month, day])
+    end
+  end
+
+  defp name(args) do
+    case Keyword.fetch(args, :broadway) do
+      {:ok, config} ->
+        config[:name]
+
+      :error ->
+        args[:name] || __MODULE__
+    end
+  end
+
+  # Manually trigger garbage collection to clear refc binary memory
+  @spec maybe_garbage_collect() :: :ok
+  defp maybe_garbage_collect do
+    case :recon.info(self(), :binary_memory) do
+      {:binary_memory, binary} when binary > @max_binary_memory ->
+        Logger.debug("Forcing garbage collection")
+        :erlang.garbage_collect(self())
+
+      _ ->
+        :ok
+    end
+  end
+end
