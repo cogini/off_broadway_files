@@ -139,7 +139,9 @@ defmodule OffBroadwayFiles.Producer do
   def handle_info({:ack, _ref, successful_messages, failed_messages} = message, state) do
     Logger.info(fn -> "ACK: #{inspect(message)}" end)
     config = state.config
-    %{archive_dir: archive_dir, failed_dir: failed_dir, datetime_pattern: pattern, tries: tries} = config
+
+    %{archive_dir: archive_dir, failed_dir: failed_dir, datetime_pattern: pattern, tries: tries} =
+      config
 
     # Move files to archive_dir after successful processing
     for message <- successful_messages do
