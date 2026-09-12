@@ -205,20 +205,16 @@ defmodule OffBroadwayFiles.Producer do
             # Skip files that are newer than the minimum age
             |> Enum.filter(&by_age(&1, now, config.min_age))
 
-          # |> Enum.map(&get_datetime_from_filename(&1, datetime_pattern))
+          queue =
+            new_files
+            |> Enum.each(fn file -> :ets.insert(state_tab, {file.path, %{try: 1}}) end)
+            Enum.reduce(queue, &:queue.in/2)
 
-          Logger.debug("new_files: #{inspect(new_files)}")
+          Logger.info("Added #{length(new_files)} new files to queue, queue length: #{:queue.len(queue)}")
+          queue
 
-          if Enum.empty?(new_files) do
-            Logger.debug("No new files found in #{config.in_dir}")
-            queue
-          else
-            new_queue = Enum.reduce(new_files, queue, &:queue.in/2)
-            Enum.each(new_files, fn file -> :ets.insert(state_tab, {file.path, %{try: 1}}) end)
-            # Logger.debug("new queue len: #{:queue.len(new_queue)}")
-            Logger.debug("Added new files to queue: #{length(new_files)}")
-            new_queue
-          end
+
+        # |> Enum.map(&get_datetime_from_filename(&1, datetime_pattern))
 
         {:error, reason} ->
           Logger.error("Error reading files from #{config.in_dir}: #{inspect(reason)}")
