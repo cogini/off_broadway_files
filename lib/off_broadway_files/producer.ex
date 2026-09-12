@@ -138,61 +138,17 @@ defmodule OffBroadwayFiles.Producer do
   # Handler for Broadway.CallerAcknowledger
   def handle_info({:ack, _ref, successful_messages, failed_messages} = message, state) do
     Logger.info(fn -> "ACK: #{inspect(message)}" end)
-    config = state.config
-
-    %{archive_dir: archive_dir, failed_dir: failed_dir, datetime_pattern: pattern, tries: tries} =
-      config
 
     # Move files to archive_dir after successful processing
-    for message <- successful_messages do
-      event = message.metadata
-      %{name: name, path: path} = event
-
-      {:ok, datetime} = filename_to_datetime(path, pattern)
-      datetime_path = datetime_to_path(datetime)
-      dest_path = Path.join([archive_dir, datetime_path, name])
-
-      Logger.debug("Moving file #{path} to archive #{dest_path}")
-      File.mkdir_p!(Path.join(archive_dir, datetime_path))
-      :ok = File.rename(path, dest_path)
-
-      :ets.delete(state.state_tab, path)
-    end
+    Enum.each(successful_messages, &process_successful_message(&1, state))
 
     # Retry or move files to failed_dir
-    retry_messages =
-      for message <- failed_messages do
-        event = message.metadata
-        %{path: path} = event
+    retry_messages = 
+      failed_messages
+      |> Enum.map(&process_failed_message(&1, state))
+      |> List.flatten()
 
-        case :ets.lookup(state.state_tab, path) do
-          [] ->
-            # This should not happen
-            Logger.warning("File not found in state table, retrying: #{path}")
-            :ets.insert(state.state_tab, {path, %{try: 1}})
-            message
-
-          [{_path, %{try: try}}] ->
-            if try <= tries do
-              Logger.info("Retrying file (try #{try + 1}): #{path}")
-              :ets.insert(state.state_tab, {path, %{try: try + 1}})
-              message
-            else
-              {:ok, datetime} = filename_to_datetime(path, pattern)
-              datetime_path = datetime_to_path(datetime)
-              dest_path = Path.join([failed_dir, datetime_path, Path.basename(path)])
-
-              Logger.info("File tries exceeded, moving #{path} to failed #{dest_path}")
-
-              File.mkdir_p!(Path.join(failed_dir, datetime_path))
-              :ok = File.rename(path, dest_path)
-              :ets.delete(state.state_tab, path)
-              []
-            end
-        end
-      end
-
-    {:noreply, List.flatten(retry_messages), state}
+    {:noreply, retry_messages, state}
   end
 
   # Handler for Broadway.CallerAcknowledger
@@ -206,11 +162,6 @@ defmodule OffBroadwayFiles.Producer do
     {:noreply, [], state}
   end
 
-  # defp datetime_path(event, pattern) do
-  #   %{name: name, path: path} = event
-  #   {:ok, datetime} = filename_to_datetime(path, pattern)
-  #   datetime_path = datetime_to_path(datetime)
-  # end
 
   private do
     # Fulfil demand from queue
@@ -340,6 +291,59 @@ defmodule OffBroadwayFiles.Producer do
     # Get age in seconds
     defp age_in_seconds(datetime, now) do
       now - :calendar.datetime_to_gregorian_seconds(datetime)
+    end
+
+    @spec process_successful_message(Broadway.Message.t(), map()) :: :ok
+    defp process_successful_message(message, state) do
+      %{archive_dir: archive_dir, datetime_pattern: pattern} = state.config
+      event = message.metadata
+      %{name: name, path: path} = event
+
+      {:ok, datetime} = filename_to_datetime(path, pattern)
+      datetime_path = datetime_to_path(datetime)
+      dest_path = Path.join([archive_dir, datetime_path, name])
+
+      Logger.debug("Moving file #{path} to archive #{dest_path}")
+      File.mkdir_p!(Path.join(archive_dir, datetime_path))
+      :ok = File.rename(path, dest_path)
+
+      :ets.delete(state.state_tab, path)
+
+      :ok
+    end
+
+    @spec process_failed_message(Broadway.Message.t(), map()) :: Broadway.Message.t() | []
+    defp process_failed_message(message, state) do
+      %{failed_dir: failed_dir, datetime_pattern: pattern, tries: tries} = state.config
+
+      event = message.metadata
+      %{path: path} = event
+
+      case :ets.lookup(state.state_tab, path) do
+        [] ->
+          # This should not happen
+          Logger.warning("File not found in state table, retrying: #{path}")
+          :ets.insert(state.state_tab, {path, %{try: 1}})
+          message
+
+        [{_path, %{try: try}}] ->
+          if try <= tries do
+            Logger.info("Retrying file (try #{try + 1}): #{path}")
+            :ets.insert(state.state_tab, {path, %{try: try + 1}})
+            message
+          else
+            {:ok, datetime} = filename_to_datetime(path, pattern)
+            datetime_path = datetime_to_path(datetime)
+            dest_path = Path.join([failed_dir, datetime_path, Path.basename(path)])
+
+            Logger.info("File tries exceeded, moving #{path} to failed #{dest_path}")
+
+            File.mkdir_p!(Path.join(failed_dir, datetime_path))
+            :ok = File.rename(path, dest_path)
+            :ets.delete(state.state_tab, path)
+            []
+          end
+      end
     end
 
     # Extract datetime from filename using Regex pattern
