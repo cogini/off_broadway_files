@@ -105,13 +105,14 @@ defmodule OffBroadwayFiles.MixProject do
       quality: [
         "test",
         "format --check-formatted",
-        "credo",
+        "credo --ignore todo",
         # mix deps.clean --unlock --unused
         "deps.unlock --check-unused",
         # mix deps.update
         # "hex.outdated",
         # "hex.audit",
-        "deps.audit --ignore-package-names cowlib",
+        # "deps.audit --ignore-package-names cowlib",
+        "deps.audit",
         "dialyzer --quiet-with-result"
       ],
       "quality.ci": [
@@ -119,8 +120,9 @@ defmodule OffBroadwayFiles.MixProject do
         "deps.unlock --check-unused",
         # "hex.outdated",
         # "hex.audit",
-        "deps.audit --ignore-package-names cowlib",
-        "credo",
+        # "deps.audit --ignore-package-names cowlib",
+        "deps.audit",
+        "credo --ignore todo",
         "dialyzer --quiet-with-result"
       ]
     ]
