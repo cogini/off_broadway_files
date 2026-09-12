@@ -208,11 +208,10 @@ defmodule OffBroadwayFiles.Producer do
           queue =
             new_files
             |> Enum.each(fn file -> :ets.insert(state_tab, {file.path, %{try: 1}}) end)
-            Enum.reduce(queue, &:queue.in/2)
+            |> Enum.reduce(queue, &:queue.in/2)
 
-          Logger.info("Added #{length(new_files)} new files to queue, queue length: #{:queue.len(queue)}")
+          Logger.info("Added #{length(new_files)} files, queue len: #{:queue.len(queue)}")
           queue
-
 
         # |> Enum.map(&get_datetime_from_filename(&1, datetime_pattern))
 
