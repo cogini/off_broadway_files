@@ -143,7 +143,7 @@ defmodule OffBroadwayFiles.Producer do
     Enum.each(successful_messages, &process_successful_message(&1, state))
 
     # Retry or move files to failed_dir
-    retry_messages = 
+    retry_messages =
       failed_messages
       |> Enum.map(&process_failed_message(&1, state))
       |> List.flatten()
@@ -161,7 +161,6 @@ defmodule OffBroadwayFiles.Producer do
     Logger.info(fn -> "Unexpected message: #{inspect(message)}" end)
     {:noreply, [], state}
   end
-
 
   private do
     # Fulfil demand from queue
