@@ -292,12 +292,21 @@ defmodule OffBroadwayFiles.Producer do
       event = message.metadata
       %{name: name, path: path} = event
 
-      {:ok, datetime} = filename_to_datetime(path, pattern)
-      datetime_path = datetime_to_path(datetime)
-      dest_path = Path.join([archive_dir, datetime_path, name])
+      dest_path =
+        case filename_to_datetime(path, pattern) do
+          {:ok, datetime} ->
+            filename_to_datetime(path, pattern)
+            datetime_path = datetime_to_path(datetime)
+            File.mkdir_p!(Path.join(archive_dir, datetime_path))
+            Path.join([archive_dir, datetime_path, name])
+
+          {:error, :no_match} ->
+            # TODO: Use stat mtime to create a datetime path instead?
+            Logger.warning("Filename #{path} does not match datetime pattern #{inspect(pattern)}")
+            Path.join([archive_dir, name])
+        end
 
       Logger.debug("Moving file #{path} to archive #{dest_path}")
-      File.mkdir_p!(Path.join(archive_dir, datetime_path))
       :ok = File.rename(path, dest_path)
 
       :ets.delete(state.state_tab, path)
