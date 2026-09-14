@@ -8,15 +8,19 @@ defmodule OffBroadwayFiles.Pipeline do
   def start_link(args) do
     Logger.info("#{__MODULE__} init: #{inspect(args)}")
 
+    in_dir = args[:in_dir] || "/tmp/off_broadway_files"
+    archive_dir = args[:archive_dir] || Path.join(in_dir, "archive")
+    failed_dir = args[:failed_dir] || Path.join(in_dir, "failed")
+
     producer_config = [
-      in_dir: "/Users/jake/tmp/flow",
-      archive_dir: "/Users/jake/tmp/flow/archive",
-      failed_dir: "/Users/jake/tmp/flow/failed",
+      in_dir: in_dir,
+      archive_dir: archive_dir,
+      failed_dir: failed_dir
     ]
 
-    File.mkdir_p!(producer_config[:in_dir])
-    File.mkdir_p!(producer_config[:archive_dir])
-    File.mkdir_p!(producer_config[:failed_dir])
+    File.mkdir_p!(in_dir)
+    File.mkdir_p!(archive_dir)
+    File.mkdir_p!(failed_dir)
 
     Broadway.start_link(__MODULE__,
       name: __MODULE__,
@@ -24,14 +28,8 @@ defmodule OffBroadwayFiles.Pipeline do
         module: {Producer, producer_config}
       ],
       processors: [
-        default: []
-      ]
-      # processors: [
-      #   default: [concurrency: 50]
-      # ],
-      # batchers: [
-      #   s3: [concurrency: 5, batch_size: 10, batch_timeout: 1000]
-      # ]
+        default: [concurrency: 1]
+     ]
     )
   end
 
