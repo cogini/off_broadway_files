@@ -29,7 +29,7 @@ defmodule OffBroadwayFiles.Pipeline do
       ],
       processors: [
         default: [concurrency: 1]
-     ]
+      ]
     )
   end
 
