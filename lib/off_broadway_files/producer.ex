@@ -72,9 +72,6 @@ defmodule OffBroadwayFiles.Producer do
       # Prefetch queue to avoid reading dir on every demand
       queue: :queue.new(),
 
-      # Last file read from the input directory
-      last_file: nil,
-
       # How often to check for new files in ms
       fetch_interval: fetch_interval
     }
