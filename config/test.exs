@@ -8,9 +8,9 @@ config :junit_formatter,
   include_filename?: true,
   include_file_line?: true
 
-# config :logger, :default_formatter,
-#   format: "$time $metadata[$level] $message\n",
-#   metadata: [:file, :line]
+config :logger, :default_formatter,
+  format: "$time $metadata[$level] $message\n",
+  metadata: [:pid, :file, :line]
 
 config :logger,
   level: :warning,
