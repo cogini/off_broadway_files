@@ -1,4 +1,7 @@
 defmodule OffBroadwayFiles.Pipeline do
+  @moduledoc """
+  Test pipeline for producer.
+  """
   use Broadway
 
   alias OffBroadwayFiles.Producer
