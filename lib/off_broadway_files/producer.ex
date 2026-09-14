@@ -20,9 +20,10 @@ defmodule OffBroadwayFiles.Producer do
 
   @impl true
   def init(args) do
-    Logger.info("#{__MODULE__} init: #{inspect(args)}")
+    Logger.info("init: #{inspect(args)}")
 
     state_tab = args[:state_tab] || :"#{name(args)}_producer_state"
+    Logger.debug("state_tab: #{state_tab}")
 
     # TODO: handle case where table already exists
     :ets.new(state_tab, [:named_table, :public, :set])
@@ -100,7 +101,9 @@ defmodule OffBroadwayFiles.Producer do
       "events: #{inspect(events)}, remaining_queue: #{inspect(remaining_queue)}, remaining_demand: #{remaining_demand}"
     )
 
-    {:noreply, events, %{state | queue: remaining_queue, demand: remaining_demand}}
+    messages = Enum.map(events, &event_to_message/1)
+
+    {:noreply, messages, %{state | queue: remaining_queue, demand: remaining_demand}}
   end
 
   @impl true
@@ -120,20 +123,11 @@ defmodule OffBroadwayFiles.Producer do
     {events, remaining_queue, remaining_demand} =
       dispatch_events(new_queue, :queue.len(new_queue), demand)
 
-    messages =
-      for event <- events do
-        %Broadway.Message{
-          data: event,
-          acknowledger: Broadway.CallerAcknowledger.init({self(), make_ref()}, :ignored),
-          metadata: Map.take(event, [:name, :path, :stat])
-        }
-      end
+    messages = Enum.map(events, &event_to_message/1)
 
     Process.send_after(self(), :fetch, state.fetch_interval)
     {:noreply, messages, %{state | queue: remaining_queue, demand: remaining_demand}}
   end
-
-  # :ets.tab2list(:zones)
 
   # Handler for Broadway.CallerAcknowledger
   def handle_info({:ack, _ref, successful_messages, failed_messages} = message, state) do
@@ -162,6 +156,16 @@ defmodule OffBroadwayFiles.Producer do
     {:noreply, [], state}
   end
 
+  defp event_to_message(event) do
+    %Broadway.Message{
+      data: event,
+      acknowledger: Broadway.CallerAcknowledger.init({self(), make_ref()}, :ignored),
+      metadata: Map.take(event, [:name, :path, :stat])
+    }
+  end
+
+  # :ets.tab2list(:zones)
+
   private do
     # Fulfil demand from queue
     @spec dispatch_events(:queue.queue(), non_neg_integer(), non_neg_integer()) ::
@@ -182,7 +186,7 @@ defmodule OffBroadwayFiles.Producer do
 
     # queue does not have enough events to satisfy demand
     defp dispatch_events(queue, queue_len, demand) when queue_len < demand do
-      {events_queue, remaining_queue} = :queue.split(demand, queue)
+      {events_queue, remaining_queue} = :queue.split(queue_len, queue)
       {:queue.to_list(events_queue), remaining_queue, demand - queue_len}
     end
 
@@ -205,10 +209,8 @@ defmodule OffBroadwayFiles.Producer do
             # Skip files that are newer than the minimum age
             |> Enum.filter(&by_age(&1, now, config.min_age))
 
-          queue =
-            new_files
-            |> Enum.each(fn file -> :ets.insert(state_tab, {file.path, %{try: 1}}) end)
-            |> Enum.reduce(queue, &:queue.in/2)
+          queue = Enum.reduce(new_files, queue, &:queue.in/2)
+          Enum.each(new_files, fn file -> :ets.insert(state_tab, {file.path, %{try: 1}}) end)
 
           Logger.info("Added #{length(new_files)} files, queue len: #{:queue.len(queue)}")
           queue
