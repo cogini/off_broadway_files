@@ -197,19 +197,21 @@ defmodule OffBroadwayFiles.Producer do
 
           new_files =
             all_files
-            # Get files that are newer than the last proccessed file, if any
+            # Get new files that are not already being processed
             |> new_files(state_tab)
-            # Restrict the number of files that we have to stat
+            # Restrict number of files that we have to stat
             |> Enum.take(desired_count)
-            # Stat file and filter out directories and other non-regular files
+            # Stat files and filter out directories and other non-regular files
             |> Enum.flat_map(&stat_file/1)
+            # TODO: optionally filter zero-length files
             # Skip files that are newer than the minimum age
+            # This avoids processing files that are currently being written
             |> Enum.filter(&by_age(&1, now, config.min_age))
 
           queue = Enum.reduce(new_files, queue, &:queue.in/2)
           Enum.each(new_files, fn file -> :ets.insert(state_tab, {file.path, %{try: 1}}) end)
 
-          Logger.info("Added #{length(new_files)} files, queue len: #{:queue.len(queue)}")
+          Logger.debug("Added #{length(new_files)} files, queue len: #{:queue.len(queue)}")
           queue
 
         # |> Enum.map(&get_datetime_from_filename(&1, datetime_pattern))
