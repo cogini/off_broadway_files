@@ -187,7 +187,6 @@ defmodule OffBroadwayFiles.Producer do
       {:queue.to_list(events_queue), remaining_queue, demand - queue_len}
     end
 
-
     # Read input directory and add new files to the queue
     @spec add_files_to_queue(:queue.queue(), map()) :: :queue.queue()
     defp add_files_to_queue(queue, state) do
@@ -198,13 +197,12 @@ defmodule OffBroadwayFiles.Producer do
 
       case read_files(config) do
         {:ok, all_files} ->
-
           now = :calendar.datetime_to_gregorian_seconds(:calendar.universal_time())
 
           new_files =
-            all_files 
+            all_files
             # Get files that are not already being processed
-            |> new_files(config) 
+            |> new_files(config)
             # Restrict to a reasonable number of files
             |> Enum.take(desired_count)
             # Stat file, ignoring missing files

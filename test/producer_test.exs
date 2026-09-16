@@ -15,7 +15,8 @@ defmodule ProducerTest do
       queue = :queue.from_list([1, 2, 3])
       demand = 2
 
-      assert {events, new_queue, new_demand} = Producer.dispatch_events(queue, :queue.len(queue), demand)
+      assert {events, new_queue, new_demand} =
+               Producer.dispatch_events(queue, :queue.len(queue), demand)
 
       assert events == [1, 2]
       assert :queue.len(new_queue) == 1
@@ -26,7 +27,8 @@ defmodule ProducerTest do
       queue = :queue.from_list([1, 2, 3])
       demand = 3
 
-      assert {events, new_queue, new_demand} = Producer.dispatch_events(queue, :queue.len(queue), demand)
+      assert {events, new_queue, new_demand} =
+               Producer.dispatch_events(queue, :queue.len(queue), demand)
 
       assert events == [1, 2, 3]
       assert :queue.len(new_queue) == 0
@@ -37,7 +39,8 @@ defmodule ProducerTest do
       queue = :queue.from_list([1, 2, 3])
       demand = 4
 
-      assert {events, new_queue, new_demand} = Producer.dispatch_events(queue, :queue.len(queue), demand)
+      assert {events, new_queue, new_demand} =
+               Producer.dispatch_events(queue, :queue.len(queue), demand)
 
       assert events == [1, 2, 3]
       assert :queue.len(new_queue) == 0
