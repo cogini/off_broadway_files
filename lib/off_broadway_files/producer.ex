@@ -111,14 +111,11 @@ defmodule OffBroadwayFiles.Producer do
   def handle_info(:fetch, state) do
     Logger.debug("handle_info(:fetch) state: #{inspect(state)}")
 
-    %{config: config, queue: queue, demand: demand} = state
+    %{queue: queue, demand: demand} = state
 
     maybe_garbage_collect()
 
-    queue_len = :queue.len(queue)
-    desired_count = config.prefetch_count - queue_len
-
-    new_queue = add_files_to_queue(queue, desired_count, state)
+    new_queue = add_files_to_queue(queue, state)
 
     {events, remaining_queue, remaining_demand} =
       dispatch_events(new_queue, :queue.len(new_queue), demand)
@@ -190,28 +187,17 @@ defmodule OffBroadwayFiles.Producer do
       {:queue.to_list(events_queue), remaining_queue, demand - queue_len}
     end
 
-    @spec add_files_to_queue(:queue.queue(), non_neg_integer(), map()) :: :queue.queue()
-    defp add_files_to_queue(queue, desired_count, state) do
+    @spec add_files_to_queue(:queue.queue(), map()) :: :queue.queue()
+    defp add_files_to_queue(queue, state) do
       %{config: config, state_tab: state_tab} = state
+
+      queue_len = :queue.len(queue)
+      desired_count = config.prefetch_count - queue_len
 
       case read_files(config) do
         {:ok, all_files} ->
-          now = :calendar.datetime_to_gregorian_seconds(:calendar.universal_time())
 
-          new_files =
-            all_files
-            # Get files that are not already being processed
-            |> new_files(state_tab)
-            # Restrict number of files that we have to stat if there are a lot
-            |> Enum.take(desired_count)
-            # Stat file, ignoring missing files
-            |> Enum.flat_map(&stat_file/1)
-            # Filter out dirs and special files
-            |> Enum.filter(&regular_file?/1)
-            # Reject empty files (size == 0)
-            |> Enum.reject(&empty?(&1, config.ignore_empty))
-            # Skip files newer than min_age, avoiding files currently being written
-            |> Enum.filter(&by_age(&1, now, config.min_age))
+          new_files = select_files(all_files, desired_count, config)
 
           # Add files to queue
           queue = Enum.reduce(new_files, queue, &:queue.in/2)
@@ -230,7 +216,7 @@ defmodule OffBroadwayFiles.Producer do
       end
     end
 
-    # Read files from the input directory, filtering by name and age
+    # Read files from the input directory that match pattern
     @spec read_files(map()) ::
             {:ok, list(map())} | {:error, File.posix() | :badarg | {:no_translation, binary()}}
     defp read_files(config) do
@@ -254,6 +240,25 @@ defmodule OffBroadwayFiles.Producer do
 
     defp match_names(names, file_pattern) do
       Enum.filter(names, fn name -> Regex.match?(file_pattern, name) end)
+    end
+
+    defp select_files(files, desired_count, config) do
+      %{state_tab: state_tab} = config
+      now = :calendar.datetime_to_gregorian_seconds(:calendar.universal_time())
+
+      files
+      # Get files that are not already being processed
+      |> new_files(state_tab)
+      # Restrict number of files that we have to stat if there are a lot
+      |> Enum.take(desired_count)
+      # Stat file, ignoring missing files
+      |> Enum.flat_map(&stat_file/1)
+      # Filter out dirs and special files
+      |> Enum.filter(&regular_file?/1)
+      # Reject empty files (size == 0)
+      |> Enum.reject(&empty?(&1, config.ignore_empty))
+      # Skip files newer than min_age, avoiding files currently being written
+      |> Enum.filter(&by_age(&1, now, config.min_age))
     end
 
     # Get files that are not already in the state table
