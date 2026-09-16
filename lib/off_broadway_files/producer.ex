@@ -188,6 +188,7 @@ defmodule OffBroadwayFiles.Producer do
     end
 
 
+    # Read input directory and add new files to the queue
     @spec add_files_to_queue(:queue.queue(), map()) :: :queue.queue()
     defp add_files_to_queue(queue, state) do
       %{config: config, state_tab: state_tab} = state
