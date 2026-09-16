@@ -259,7 +259,7 @@ defmodule OffBroadwayFiles.Producer do
     end
 
     # Get files that are not already in the state table
-    @spec new_files(list(map()), atom()) :: list(map())
+    @spec new_files(list(map()), map()) :: list(map())
     defp new_files(events, config) do
       %{state_tab: state_tab} = config
       file_state = :ets.tab2list(state_tab) |> Enum.into(%{})
