@@ -25,6 +25,34 @@ defmodule OffBroadwayFiles.MixProject do
     ]
   end
 
+  defp aliases do
+    [
+      setup: ["deps.get"],
+      quality: [
+        "test",
+        "format --check-formatted",
+        "credo --ignore todo",
+        # mix deps.clean --unlock --unused
+        "deps.unlock --check-unused",
+        # mix deps.update
+        # "hex.outdated",
+        # "hex.audit",
+        "deps.audit --ignore-package-names cowlib",
+        "dialyzer --quiet-with-result"
+      ],
+      "quality.ci": [
+        "format --check-formatted",
+        "deps.unlock --check-unused",
+        # "hex.outdated",
+        # "hex.audit",
+        # "deps.audit --ignore-package-names cowlib",
+        "deps.audit",
+        "credo --ignore todo",
+        "dialyzer --quiet-with-result"
+      ]
+    ]
+  end
+
   def application do
     [
       extra_applications: [:logger]
@@ -96,6 +124,5 @@ defmodule OffBroadwayFiles.MixProject do
         "Changelog" =>
           "#{@github}/blob/#{@version}/CHANGELOG.md##{String.replace(@version, ".", "")}"
       }
-    ]
   end
 end
