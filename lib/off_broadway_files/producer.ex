@@ -153,6 +153,7 @@ defmodule OffBroadwayFiles.Producer do
     {:noreply, [], state}
   end
 
+  # Wrap GenStage event in a Broadway.Message with metadata
   defp event_to_message(event) do
     %Broadway.Message{
       data: event,
@@ -352,23 +353,22 @@ defmodule OffBroadwayFiles.Producer do
           :ets.insert(state.state_tab, {path, %{try: 1}})
           message
 
+        [{_path, %{try: try}}] when try <= tries ->
+          Logger.info("Retrying file (try #{try + 1}): #{path}")
+          :ets.insert(state.state_tab, {path, %{try: try + 1}})
+          message
+
         [{_path, %{try: try}}] ->
-          if try <= tries do
-            Logger.info("Retrying file (try #{try + 1}): #{path}")
-            :ets.insert(state.state_tab, {path, %{try: try + 1}})
-            message
-          else
-            {:ok, datetime} = filename_to_datetime(path, pattern)
-            datetime_path = datetime_to_path(datetime)
-            dest_path = Path.join([failed_dir, datetime_path, Path.basename(path)])
+          {:ok, datetime} = filename_to_datetime(path, pattern)
+          datetime_path = datetime_to_path(datetime)
+          dest_path = Path.join([failed_dir, datetime_path, Path.basename(path)])
 
-            Logger.info("File tries exceeded, moving #{path} to failed #{dest_path}")
+          Logger.info("File tries exceeded (#{try}), moving #{path} to failed #{dest_path}")
 
-            File.mkdir_p!(Path.join(failed_dir, datetime_path))
-            :ok = File.rename(path, dest_path)
-            :ets.delete(state.state_tab, path)
-            []
-          end
+          File.mkdir_p!(Path.join(failed_dir, datetime_path))
+          :ok = File.rename(path, dest_path)
+          :ets.delete(state.state_tab, path)
+          []
       end
     end
 
