@@ -35,7 +35,7 @@ defmodule OffBroadwayFiles.Producer do
       # Directory to save files after they have been processed
       archive_dir: args[:archive_dir],
 
-      # Directory to save failed files
+      # Directory to save files if processing fails
       failed_dir: args[:failed_dir],
 
       # Ignore files newer than this number of seconds.
@@ -197,18 +197,23 @@ defmodule OffBroadwayFiles.Producer do
 
           new_files =
             all_files
-            # Get new files that are not already being processed
+            # Get files that are not already being processed
             |> new_files(state_tab)
-            # Restrict number of files that we have to stat
+            # Restrict number of files that we have to stat if there are a lot
             |> Enum.take(desired_count)
-            # Stat files and filter out directories and other non-regular files
+            # Stat file, ignoring missing files
             |> Enum.flat_map(&stat_file/1)
-            # TODO: optionally filter zero-length files
-            # Skip files that are newer than the minimum age
-            # This avoids processing files that are currently being written
+            # Filter out dirs and special files
+            |> Enum.filter(&regular_file?/1)
+            # Reject empty files (size == 0)
+            |> Enum.reject(&empty?/1)
+            # Skip files newer than min_age, avoiding files currently being written
             |> Enum.filter(&by_age(&1, now, config.min_age))
 
+          # Add files to queue
           queue = Enum.reduce(new_files, queue, &:queue.in/2)
+
+          # Add files to state table
           Enum.each(new_files, fn file -> :ets.insert(state_tab, {file.path, %{try: 1}}) end)
 
           Logger.debug("Added #{length(new_files)} files, queue len: #{:queue.len(queue)}")
@@ -255,20 +260,32 @@ defmodule OffBroadwayFiles.Producer do
       Enum.filter(events, fn event -> not Map.has_key?(file_state, event.path) end)
     end
 
-    # Stat file and and filter out directories and other non-regular files
+    # Stat file and add to record, returning empty list on error
     @spec stat_file(map()) :: list(map())
     defp stat_file(%{path: path} = rec) do
-      case File.stat!(path, time: :universal) do
-        %{type: :regular} = stat ->
+      case File.stat(path, time: :universal) do
+        {:ok, stat} ->
           [Map.put(rec, :stat, stat)]
 
-        %{type: :directory} ->
-          # Logger.debug("Skipping #{type} #{path}")
+        {:error, reason} ->
+          Logger.error("Could not stat file #{path}: #{reason}")
           []
+      end
+    end
 
-        %{type: type} ->
-          Logger.debug("Skipping #{type} #{path}")
-          []
+    # Test if file is a regular file, not a dir or special file
+    @spec regular_file?(map()) :: boolean()
+    defp regular_file?(%{stat: %{type: :regular}}), do: true
+    defp regular_file?(_), do: false
+
+    # Test if file is empty (size == 0)
+    @spec empty?(map()) :: boolean()
+    defp empty?(%{path: path, stat: stat}) do
+      if stat.size == 0 do
+        Logger.debug("Skipping empty file #{path}")
+        true
+      else
+        false
       end
     end
 
