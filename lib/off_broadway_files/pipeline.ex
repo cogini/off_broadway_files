@@ -14,6 +14,7 @@ defmodule OffBroadwayFiles.Pipeline do
     in_dir = args[:in_dir] || "/tmp/off_broadway_files"
     archive_dir = args[:archive_dir] || Path.join(in_dir, "archive")
     failed_dir = args[:failed_dir] || Path.join(in_dir, "failed")
+
     # processors_concurrency = args[:processors_concurrency] || default: System.schedulers_online()
 
     producer_config = [

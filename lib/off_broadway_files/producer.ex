@@ -286,6 +286,7 @@ defmodule OffBroadwayFiles.Producer do
     defp empty?(event, ignore_empty \\ false)
     defp empty?(_, false), do: false
     defp empty?(%{stat: stat}, _) when stat.size > 0, do: false
+
     defp empty?(%{path: path, stat: stat}, _) when stat.size == 0 do
       Logger.debug("Skipping empty file #{path}")
       true
