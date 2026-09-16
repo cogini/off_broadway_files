@@ -42,6 +42,9 @@ defmodule OffBroadwayFiles.Producer do
       # Avoids processing files that are currently being written.
       min_age: args[:min_age] || 0,
 
+      # Ignore empty files (size == 0)
+      ignore_empty: args[:ignore_empty] || false,
+
       # Regex matching files to process
       # Files that do not match this pattern will be ignored
       # file_pattern: Regex.compile!(args[:file_pattern] || ".*\\.log$"),
@@ -206,7 +209,7 @@ defmodule OffBroadwayFiles.Producer do
             # Filter out dirs and special files
             |> Enum.filter(&regular_file?/1)
             # Reject empty files (size == 0)
-            |> Enum.reject(&empty?/1)
+            |> Enum.reject(&empty?(&1, config.ignore_empty))
             # Skip files newer than min_age, avoiding files currently being written
             |> Enum.filter(&by_age(&1, now, config.min_age))
 
@@ -260,7 +263,7 @@ defmodule OffBroadwayFiles.Producer do
       Enum.filter(events, fn event -> not Map.has_key?(file_state, event.path) end)
     end
 
-    # Stat file and add to record, returning empty list on error
+    # Stat file and add info to record, returning empty list on error
     @spec stat_file(map()) :: list(map())
     defp stat_file(%{path: path} = rec) do
       case File.stat(path, time: :universal) do
@@ -278,15 +281,14 @@ defmodule OffBroadwayFiles.Producer do
     defp regular_file?(%{stat: %{type: :regular}}), do: true
     defp regular_file?(_), do: false
 
-    # Test if file is empty (size == 0)
-    @spec empty?(map()) :: boolean()
-    defp empty?(%{path: path, stat: stat}) do
-      if stat.size == 0 do
-        Logger.debug("Skipping empty file #{path}")
-        true
-      else
-        false
-      end
+    # Optionally test if file is empty (size == 0)
+    @spec empty?(map(), boolean()) :: boolean()
+    defp empty?(event, ignore_empty \\ false)
+    defp empty?(_, false), do: false
+    defp empty?(%{stat: stat}, _) when stat.size > 0, do: false
+    defp empty?(%{path: path, stat: stat}, _) when stat.size == 0 do
+      Logger.debug("Skipping empty file #{path}")
+      true
     end
 
     # Filter to skip new files
