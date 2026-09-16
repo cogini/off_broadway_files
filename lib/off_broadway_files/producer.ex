@@ -181,11 +181,12 @@ defmodule OffBroadwayFiles.Producer do
       {:queue.to_list(events_queue), remaining_queue, 0}
     end
 
-    # queue does not have enough events to satisfy demand
+    # queue does not have enough to satisfy demand
     defp dispatch_events(queue, queue_len, demand) when queue_len < demand do
       {events_queue, remaining_queue} = :queue.split(queue_len, queue)
       {:queue.to_list(events_queue), remaining_queue, demand - queue_len}
     end
+
 
     @spec add_files_to_queue(:queue.queue(), map()) :: :queue.queue()
     defp add_files_to_queue(queue, state) do
@@ -197,12 +198,27 @@ defmodule OffBroadwayFiles.Producer do
       case read_files(config) do
         {:ok, all_files} ->
 
-          new_files = select_files(all_files, desired_count, config)
+          now = :calendar.datetime_to_gregorian_seconds(:calendar.universal_time())
+
+          new_files =
+            all_files 
+            # Get files that are not already being processed
+            |> new_files(config) 
+            # Restrict to a reasonable number of files
+            |> Enum.take(desired_count)
+            # Stat file, ignoring missing files
+            |> Enum.flat_map(&stat_file/1)
+            # Filter out dirs and special files
+            |> Enum.filter(&regular_file?/1)
+            # Reject empty files (size == 0)
+            |> Enum.reject(&empty?(&1, config.ignore_empty))
+            # Skip files newer than min_age, avoiding files currently being written
+            |> Enum.filter(&by_age(&1, now, config.min_age))
 
           # Add files to queue
           queue = Enum.reduce(new_files, queue, &:queue.in/2)
 
-          # Add files to state table
+          # Add files to state table to indicate that they are being processed
           Enum.each(new_files, fn file -> :ets.insert(state_tab, {file.path, %{try: 1}}) end)
 
           Logger.debug("Added #{length(new_files)} files, queue len: #{:queue.len(queue)}")
@@ -242,28 +258,10 @@ defmodule OffBroadwayFiles.Producer do
       Enum.filter(names, fn name -> Regex.match?(file_pattern, name) end)
     end
 
-    defp select_files(files, desired_count, config) do
-      %{state_tab: state_tab} = config
-      now = :calendar.datetime_to_gregorian_seconds(:calendar.universal_time())
-
-      files
-      # Get files that are not already being processed
-      |> new_files(state_tab)
-      # Restrict number of files that we have to stat if there are a lot
-      |> Enum.take(desired_count)
-      # Stat file, ignoring missing files
-      |> Enum.flat_map(&stat_file/1)
-      # Filter out dirs and special files
-      |> Enum.filter(&regular_file?/1)
-      # Reject empty files (size == 0)
-      |> Enum.reject(&empty?(&1, config.ignore_empty))
-      # Skip files newer than min_age, avoiding files currently being written
-      |> Enum.filter(&by_age(&1, now, config.min_age))
-    end
-
     # Get files that are not already in the state table
     @spec new_files(list(map()), atom()) :: list(map())
-    defp new_files(events, state_tab) do
+    defp new_files(events, config) do
+      %{state_tab: state_tab} = config
       file_state = :ets.tab2list(state_tab) |> Enum.into(%{})
       Enum.filter(events, fn event -> not Map.has_key?(file_state, event.path) end)
     end
