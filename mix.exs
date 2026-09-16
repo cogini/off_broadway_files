@@ -73,10 +73,6 @@ defmodule OffBroadwayFiles.MixProject do
     ]
   end
 
-  defp elixirc_paths(:dev), do: ["lib", "test/support"]
-  defp elixirc_paths(:test), do: ["lib", "test/support"]
-  defp elixirc_paths(_), do: ["lib"]
-
   defp deps do
     [
       {:broadway, "~> 1.3"},
@@ -114,6 +110,10 @@ defmodule OffBroadwayFiles.MixProject do
     ]
   end
 
+  defp elixirc_paths(:dev), do: ["lib", "test/support"]
+  defp elixirc_paths(:test), do: ["lib", "test/support"]
+  defp elixirc_paths(_), do: ["lib"]
+
   defp package do
     [
       description: description(),
@@ -124,5 +124,6 @@ defmodule OffBroadwayFiles.MixProject do
         "Changelog" =>
           "#{@github}/blob/#{@version}/CHANGELOG.md##{String.replace(@version, ".", "")}"
       }
+    ]
   end
 end
