@@ -7,7 +7,6 @@ defmodule OffBroadwayFiles.Filter.RegularFile do
   # @impl true
 
   @spec test(map(), map()) :: boolean()
-  def test(event, config)
-  def test(%{stat: stat}, %{min_size: min_size}) when stat.size >= min_size, do: true
-  def test(_, _), do: false
+  def test(%{stat: %{type: :regular}}, _config), do: true
+  def test(_, _config), do: false
 end

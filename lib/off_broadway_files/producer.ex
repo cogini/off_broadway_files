@@ -38,12 +38,13 @@ defmodule OffBroadwayFiles.Producer do
       # Directory to save files if processing fails
       failed_dir: args[:failed_dir],
 
-      # Ignore files newer than this number of seconds.
+      # Minimum age of files to process in seconds.
       # Avoids processing files that are currently being written.
       min_age: args[:min_age] || 0,
 
-      # Ignore empty files (size == 0)
-      ignore_empty: args[:ignore_empty] || false,
+      # Minimum size of files to process
+      # Avoids processing empty files or files that are corrupted/truncated.
+      min_size: args[:min_size] || 0,
 
       # Regex matching files to process
       # Files that do not match this pattern will be ignored
@@ -208,10 +209,10 @@ defmodule OffBroadwayFiles.Producer do
             |> Enum.take(desired_count)
             # Stat file, ignoring missing files
             |> Enum.flat_map(&stat_file/1)
-            # Filter out dirs and special files
+            # Only process regular files, not dirs and special files
             |> Enum.filter(&regular_file?/1)
-            # Reject empty files (size == 0)
-            |> Enum.reject(&empty?(&1, config.ignore_empty))
+            # Only process files that have size greater than minumum
+            |> Enum.filter(&min_size(&1, config))
             # Skip files newer than min_age, avoiding files currently being written
             |> Enum.filter(&by_age(&1, now, config.min_age))
 
@@ -285,15 +286,10 @@ defmodule OffBroadwayFiles.Producer do
     defp regular_file?(_), do: false
 
     # Optionally test if file is empty (size == 0)
-    @spec empty?(map(), boolean()) :: boolean()
-    defp empty?(event, ignore_empty \\ false)
-    defp empty?(_, false), do: false
-    defp empty?(%{stat: stat}, _) when stat.size > 0, do: false
-
-    defp empty?(%{path: path, stat: stat}, _) when stat.size == 0 do
-      Logger.debug("Skipping empty file #{path}")
-      true
-    end
+    # Filter that checks if the file size is greater than or equal to the min size.
+    @spec min_size(map(), map()) :: boolean()
+    defp min_size(%{stat: stat}, %{min_size: min_size}) when stat.size >= min_size, do: true
+    defp min_size(_, _), do: false
 
     # Filter to skip new files
     @spec by_age(map(), integer(), integer()) :: boolean()

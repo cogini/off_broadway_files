@@ -7,9 +7,9 @@ defmodule OffBroadwayFiles.Filter.MinSize do
   # @behaviour OffBroadwayFiles.Filter
   # @impl true
 
-  @doc "Test if file is a regular file, not a dir or special file"
   @spec test(map(), map()) :: boolean()
-  def test(%{stat: %{type: :regular}}, _config), do: true
-  def test(_, _config), do: false
+  def test(event, config)
+  def test(%{stat: stat}, %{min_size: min_size}) when stat.size >= min_size, do: true
+  def test(_, _), do: false
 end
 
