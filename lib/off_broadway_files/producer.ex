@@ -9,6 +9,10 @@ defmodule OffBroadwayFiles.Producer do
 
   @max_binary_memory 50_000_000
 
+  alias OffBroadwayFiles.Filter.MinSize
+  # alias OffBroadwayFiles.Filter.NamePattern
+  alias OffBroadwayFiles.Filter.RegularFile
+
   use Private
 
   require Logger
@@ -57,6 +61,8 @@ defmodule OffBroadwayFiles.Producer do
       # Number of times to try processing a file before moving it to the failed_dir
       tries: args[:tries] || 3,
 
+      filters: args[:filters] || [RegularFile, MinSize],
+
       # Regex to extract datetime from filename
       datetime_pattern:
         Regex.compile!(
@@ -76,7 +82,7 @@ defmodule OffBroadwayFiles.Producer do
       # Prefetch queue to avoid reading dir on every demand
       queue: :queue.new(),
 
-      # How often to check for new files in ms
+      # How often to check for new files, in ms
       fetch_interval: fetch_interval
     }
 
@@ -209,10 +215,12 @@ defmodule OffBroadwayFiles.Producer do
             |> Enum.take(desired_count)
             # Stat file, ignoring missing files
             |> Enum.flat_map(&stat_file/1)
+            # Apply filter modules
+            |> apply_filters(config)
             # Only process regular files, not dirs and special files
-            |> Enum.filter(&regular_file?/1)
+            # |> Enum.filter(&regular_file?/1)
             # Only process files that have size greater than minumum
-            |> Enum.filter(&min_size(&1, config))
+            # |> Enum.filter(&min_size(&1, config))
             # Skip files newer than min_age, avoiding files currently being written
             |> Enum.filter(&by_age(&1, now, config.min_age))
 
@@ -230,6 +238,14 @@ defmodule OffBroadwayFiles.Producer do
         {:error, reason} ->
           Logger.error("Error reading files from #{config.in_dir}: #{inspect(reason)}")
           queue
+      end
+    end
+
+    # Apply filters to files, returning only files that pass all filters
+    @spec apply_filters(list(map()), map()) :: list(map())
+    defp apply_filters(files, config) do
+      for file <- files, Enum.all?(config.filters, &(&1.test(file, config))) do
+        file
       end
     end
 
