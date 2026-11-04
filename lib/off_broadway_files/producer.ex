@@ -42,7 +42,7 @@ defmodule OffBroadwayFiles.Producer do
       # Directory to save files if processing fails
       failed_dir: args[:failed_dir],
 
-      # Minimum age of files to process in seconds.
+      # Minimum age of files to process in seconds
       # Avoids processing files that are currently being written.
       min_age: args[:min_age] || 0,
 
@@ -66,7 +66,7 @@ defmodule OffBroadwayFiles.Producer do
       # Regex to extract datetime from filename
       datetime_pattern:
         Regex.compile!(
-          args[:datetime_pattern] || "\.*-(?<year>\\d{4})(?<month>\\d{2})(?<day>\\d{2}).*"
+          args[:datetime_pattern] || "\.*-(?<year>\\d{4})(?<month>\\d{2})(?<day>\\d{2})-(?<hour>\\d{2})(?<min>\\d{2})"
         )
     }
 
@@ -415,8 +415,27 @@ defmodule OffBroadwayFiles.Producer do
               String.to_integer(named_captures["day"])
             )
 
-          {:ok, time} = Time.new(0, 0, 0, 0)
+          {:ok, time} =
+            Time.new(
+              capture_to_integer(named_captures["hour"]),
+              capture_to_integer(named_captures["min"]),
+              capture_to_integer(named_captures["sec"]),
+              0
+            )
+
           DateTime.new(date, time, "Etc/UTC")
+      end
+    end
+
+    # Convert string to integer, returning default on failure
+    @spec capture_to_integer(binary() | nil, integer()) :: integer()
+    defp capture_to_integer(value, default \\ 0)
+    defp capture_to_integer(nil, default), do: default
+
+    defp capture_to_integer(value, default) do
+      case Integer.parse(value) do
+        {int, _} -> int
+        :error -> default
       end
     end
 
