@@ -354,7 +354,7 @@ defmodule OffBroadwayFiles.Producer do
       %{failed_dir: failed_dir, datetime_pattern: pattern, tries: tries} = state.config
 
       event = message.metadata
-      %{path: path} = event
+      %{name: name, path: path} = event
 
       case :ets.lookup(state.state_tab, path) do
         [] ->
@@ -369,13 +369,23 @@ defmodule OffBroadwayFiles.Producer do
           message
 
         [{_path, %{try: try}}] ->
-          {:ok, datetime} = filename_to_datetime(path, pattern)
-          datetime_path = datetime_to_path(datetime)
-          dest_path = Path.join([failed_dir, datetime_path, Path.basename(path)])
+          dest_path =
+            case filename_to_datetime(path, pattern) do
+              {:ok, datetime} ->
+                filename_to_datetime(path, pattern)
+                datetime_path = datetime_to_path(datetime)
+                File.mkdir_p!(Path.join(failed_dir, datetime_path))
+                Path.join([failed_dir, datetime_path, name])
+
+              {:error, :no_match} ->
+                # TODO: Use stat mtime to create a datetime path instead?
+                Logger.warning("Filename #{path} does not match datetime pattern #{inspect(pattern)}")
+                Path.join([failed_dir, name])
+            end
 
           Logger.info("File tries exceeded (#{try}), moving #{path} to failed #{dest_path}")
 
-          File.mkdir_p!(Path.join(failed_dir, datetime_path))
+          Logger.debug("Moving file #{path} to failed dir #{dest_path}")
           :ok = File.rename(path, dest_path)
           :ets.delete(state.state_tab, path)
           []
