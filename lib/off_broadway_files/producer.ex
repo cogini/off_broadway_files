@@ -169,8 +169,6 @@ defmodule OffBroadwayFiles.Producer do
     }
   end
 
-  # :ets.tab2list(:zones)
-
   private do
     # Fulfil demand from queue
     @spec dispatch_events(:queue.queue(), non_neg_integer(), non_neg_integer()) ::
