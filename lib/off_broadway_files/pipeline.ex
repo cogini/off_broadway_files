@@ -15,7 +15,7 @@ defmodule OffBroadwayFiles.Pipeline do
     archive_dir = args[:archive_dir] || Path.join(in_dir, "archive")
     failed_dir = args[:failed_dir] || Path.join(in_dir, "failed")
 
-    # processors_concurrency = args[:processors_concurrency] || default: System.schedulers_online()
+    processors_concurrency = args[:processors_concurrency] || System.schedulers_online()
 
     producer_config = [
       in_dir: in_dir,
@@ -33,8 +33,7 @@ defmodule OffBroadwayFiles.Pipeline do
         module: {Producer, producer_config}
       ],
       processors: [
-        # default: System.schedulers_online()
-        default: [concurrency: 1]
+        default: [concurrency: processors_concurrency]
       ]
     )
   end
@@ -44,4 +43,18 @@ defmodule OffBroadwayFiles.Pipeline do
     Logger.info("Received message: #{inspect(message)}")
     message
   end
+
+  # @impl true
+  # def handle_batch(batcher, messages, batch_info, _context) do
+  #   message_ids = Enum.map(messages, &message_id/1)
+  #   Logger.debug("Batch: #{inspect(batcher)} #{inspect(batch_info)} #{inspect(message_ids)}")
+  #   messages
+  # end
+
+  # @impl true
+  # def handle_failed(messages, _context) do
+  #   message_ids = Enum.map(messages, &message_id/1)
+  #   Logger.error("Failed messages: #{inspect(message_ids)}")
+  #   messages
+  # end
 end
