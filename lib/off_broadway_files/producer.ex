@@ -218,11 +218,8 @@ defmodule OffBroadwayFiles.Producer do
             |> Enum.flat_map(&stat_file/1)
             # Apply filter modules
             |> apply_filters(config)
-            # Only process regular files, not dirs and special files
-            # |> Enum.filter(&regular_file?/1)
-            # Only process files that have size greater than minumum
-            # |> Enum.filter(&min_size(&1, config))
-            # Skip files newer than min_age, avoiding files currently being written
+            # Skip files newer than min_age
+            # This avoids processing files that are currently being written
             |> Enum.filter(&by_age(&1, now, config.min_age))
 
           # Add files to queue
@@ -233,8 +230,6 @@ defmodule OffBroadwayFiles.Producer do
 
           Logger.debug("Added #{length(new_files)} files, queue len: #{:queue.len(queue)}")
           queue
-
-        # |> Enum.map(&get_datetime_from_filename(&1, datetime_pattern))
 
         {:error, reason} ->
           Logger.error("Error reading files from #{config.in_dir}: #{inspect(reason)}")
@@ -297,19 +292,8 @@ defmodule OffBroadwayFiles.Producer do
       end
     end
 
-    # Test if file is a regular file, not a dir or special file
-    @spec regular_file?(map()) :: boolean()
-    defp regular_file?(%{stat: %{type: :regular}}), do: true
-    defp regular_file?(_), do: false
-
-    # Optionally test if file is empty (size == 0)
-    # Filter that checks if the file size is greater than or equal to the min size.
-    @spec min_size(map(), map()) :: boolean()
-    defp min_size(%{stat: stat}, %{min_size: min_size}) when stat.size >= min_size, do: true
-    defp min_size(_, _), do: false
-
-    # Filter to skip new files
-    @spec by_age(map(), integer(), integer()) :: boolean()
+    # Filter test if file age meets min_age
+    @spec by_age(map(), non_neg_integer(), non_neg_integer()) :: boolean()
     defp by_age(%{path: path, stat: stat}, now, min_age) do
       if age_in_seconds(stat.mtime, now) > min_age do
         true
