@@ -295,7 +295,7 @@ defmodule OffBroadwayFiles.Producer do
     # Filter test if file age meets min_age
     @spec by_age(map(), non_neg_integer(), non_neg_integer()) :: boolean()
     defp by_age(%{path: path, stat: stat}, now, min_age) do
-      if age_in_seconds(stat.mtime, now) > min_age do
+      if age_in_seconds(stat.mtime, now) >= min_age do
         true
       else
         Logger.debug("Skipping new file #{path}")
