@@ -44,10 +44,12 @@ defmodule OffBroadwayFiles.Producer do
 
       # Minimum age of files to process in seconds
       # Avoids processing files that are currently being written.
+      # zero means no minimum age
       min_age: args[:min_age] || 0,
 
       # Minimum size of files to process
       # Avoids processing empty files or files that are corrupted/truncated.
+      # zero means no minimum size
       min_size: args[:min_size] || 0,
 
       # Regex matching files to process
@@ -61,6 +63,7 @@ defmodule OffBroadwayFiles.Producer do
       # Number of times to try processing a file before moving it to the failed_dir
       tries: args[:tries] || 3,
 
+      # Filter modules to apply to files before adding them to the queue
       filters: args[:filters] || [RegularFile, MinSize],
 
       # Regex to extract datetime from filename
