@@ -66,9 +66,17 @@ defmodule OffBroadwayFiles.Producer do
       # Filter modules to apply to files before adding them to the queue
       filters: args[:filters] || [RegularFile, MinSize],
 
-      # Regex to extract datetime from filename
+      # Function to generate archive path from file metadata
+      # This allows files to be archived in a directory structure based on the file time
+      # This function takes two arguments: the file metadata and the config map
+      # It returns a string representing the path relative to the archive_dir,
+      # e.g., "2026/12/01" for a file with a datetime of 2026-12-01.
+      archive_path_fun: args[:archive_path_fun] || &file_datetime_path/2,
+
+      # Regex to extract datetime from filename, used by archive_path_fun
       datetime_pattern:
         Regex.compile!(
+          # This matches files like "foo-20260401-1234.log"
           args[:datetime_pattern] || "\.*-(?<year>\\d{4})(?<month>\\d{2})(?<day>\\d{2})-(?<hour>\\d{2})(?<min>\\d{2})"
         )
     }
@@ -311,23 +319,12 @@ defmodule OffBroadwayFiles.Producer do
 
     @spec process_successful_message(Broadway.Message.t(), map()) :: :ok
     defp process_successful_message(message, state) do
-      %{archive_dir: archive_dir, datetime_pattern: pattern} = state.config
-      event = message.metadata
-      %{name: name, path: path} = event
+      %{archive_dir: target_dir, archive_path_fun: path_fun} = state.config
+      %{name: name, path: path} = message.metadata
 
-      dest_path =
-        case filename_to_datetime(path, pattern) do
-          {:ok, datetime} ->
-            filename_to_datetime(path, pattern)
-            datetime_path = datetime_to_path(datetime)
-            File.mkdir_p!(Path.join(archive_dir, datetime_path))
-            Path.join([archive_dir, datetime_path, name])
-
-          {:error, :no_match} ->
-            # TODO: Use stat mtime to create a datetime path instead?
-            Logger.warning("Filename #{path} does not match datetime pattern #{inspect(pattern)}")
-            Path.join([archive_dir, name])
-        end
+      archive_path = path_fun.(message.metadata, state.config)
+      File.mkdir_p!(Path.join(target_dir, archive_path))
+      dest_path = Path.join([target_dir, archive_path, name])
 
       Logger.debug("Moving file #{path} to archive #{dest_path}")
       :ok = File.rename(path, dest_path)
@@ -339,10 +336,8 @@ defmodule OffBroadwayFiles.Producer do
 
     @spec process_failed_message(Broadway.Message.t(), map()) :: Broadway.Message.t() | []
     defp process_failed_message(message, state) do
-      %{failed_dir: failed_dir, datetime_pattern: pattern, tries: tries} = state.config
-
-      event = message.metadata
-      %{name: name, path: path} = event
+      %{failed_dir: target_dir, tries: tries, archive_path_fun: path_fun} = state.config
+      %{name: name, path: path} = message.metadata
 
       case :ets.lookup(state.state_tab, path) do
         [] ->
@@ -357,19 +352,9 @@ defmodule OffBroadwayFiles.Producer do
           message
 
         [{_path, %{try: try}}] ->
-          dest_path =
-            case filename_to_datetime(path, pattern) do
-              {:ok, datetime} ->
-                filename_to_datetime(path, pattern)
-                datetime_path = datetime_to_path(datetime)
-                File.mkdir_p!(Path.join(failed_dir, datetime_path))
-                Path.join([failed_dir, datetime_path, name])
-
-              {:error, :no_match} ->
-                # TODO: Use stat mtime to create a datetime path instead?
-                Logger.warning("Filename #{path} does not match datetime pattern #{inspect(pattern)}")
-                Path.join([failed_dir, name])
-            end
+          archive_path = path_fun.(message.metadata, state.config)
+          File.mkdir_p!(Path.join(target_dir, archive_path))
+          dest_path = Path.join([target_dir, archive_path, name])
 
           Logger.info("File tries exceeded (#{try}), moving #{path} to failed #{dest_path}")
 
@@ -380,19 +365,24 @@ defmodule OffBroadwayFiles.Producer do
       end
     end
 
-    # Extract datetime from filename using Regex pattern
-    @spec get_datetime_from_filename(map(), Regex.t()) :: map()
-    defp get_datetime_from_filename(rec, pattern) do
-      %{path: path} = rec
+    # Get datetime-based path from file name or stat info
+    # This allows files to be archived in a directory structure based on the file time
+    @spec file_datetime_path(map(), map()) :: binary()
+    def file_datetime_path(metadata, config) do
+      %{datetime_pattern: pattern} = config
+      %{path: path, stat: stat} = metadata
 
       case filename_to_datetime(path, pattern) do
         {:ok, datetime} ->
-          datetime_path = datetime_to_path(datetime)
-          Map.merge(rec, %{datetime: datetime, datetime_path: datetime_path})
+          datetime_to_path(datetime)
 
         {:error, :no_match} ->
-          Logger.warning("Filename #{path} does not match datetime pattern #{inspect(pattern)}")
-          rec
+          Logger.debug("Filename #{path} does not match datetime pattern #{inspect(pattern)}")
+
+          stat.mtime
+          |> NaiveDateTime.from_erl!()
+          |> DateTime.from_naive!("Etc/UTC")
+          |> datetime_to_path()
       end
     end
 
