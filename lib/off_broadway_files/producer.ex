@@ -273,6 +273,8 @@ defmodule OffBroadwayFiles.Producer do
     end
 
     # Select names that match Regex pattern, if any
+    @spec match_names(list(binary()), Regex.t() | nil) :: list(binary())
+    defp match_names(names, file_pattern)
     defp match_names(names, nil), do: names
 
     defp match_names(names, file_pattern) do
