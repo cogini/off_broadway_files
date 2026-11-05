@@ -304,6 +304,7 @@ defmodule OffBroadwayFiles.Producer do
     end
 
     # Get age in seconds
+    @spec age_in_seconds(:calendar.datetime(), non_neg_integer()) :: non_neg_integer()
     defp age_in_seconds(datetime, now) do
       now - :calendar.datetime_to_gregorian_seconds(datetime)
     end
