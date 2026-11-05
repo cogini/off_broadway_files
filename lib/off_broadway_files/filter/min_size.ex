@@ -12,4 +12,3 @@ defmodule OffBroadwayFiles.Filter.MinSize do
   def test(%{stat: stat}, %{min_size: min_size}) when stat.size >= min_size, do: true
   def test(_, _), do: false
 end
-

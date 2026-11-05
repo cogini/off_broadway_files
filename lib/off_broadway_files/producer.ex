@@ -71,13 +71,14 @@ defmodule OffBroadwayFiles.Producer do
       # This function takes two arguments: the file metadata and the config map
       # It returns a string representing the path relative to the archive_dir,
       # e.g., "2026/12/01" for a file with a datetime of 2026-12-01.
-      archive_path_fun: args[:archive_path_fun] || &file_datetime_path/2,
+      archive_path_fun: args[:archive_path_fun] || (&file_datetime_path/2),
 
       # Regex to extract datetime from filename, used by archive_path_fun
       datetime_pattern:
         Regex.compile!(
           # This matches files like "foo-20260401-1234.log"
-          args[:datetime_pattern] || "\.*-(?<year>\\d{4})(?<month>\\d{2})(?<day>\\d{2})-(?<hour>\\d{2})(?<min>\\d{2})"
+          args[:datetime_pattern] ||
+            "\.*-(?<year>\\d{4})(?<month>\\d{2})(?<day>\\d{2})-(?<hour>\\d{2})(?<min>\\d{2})"
         )
     }
 
@@ -248,7 +249,7 @@ defmodule OffBroadwayFiles.Producer do
     # Apply filters to files, returning only files that pass all filters
     @spec apply_filters(list(map()), map()) :: list(map())
     defp apply_filters(files, config) do
-      for file <- files, Enum.all?(config.filters, &(&1.test(file, config))) do
+      for file <- files, Enum.all?(config.filters, & &1.test(file, config)) do
         file
       end
     end
